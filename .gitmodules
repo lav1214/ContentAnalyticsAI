@@ -1,0 +1,3 @@
+[submodule "strategize-spark-draft"]
+	path = strategize-spark-draft
+	url = https://github.com/lav1214/strategize-spark-draft.git
