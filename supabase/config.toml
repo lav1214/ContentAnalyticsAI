@@ -1,0 +1,25 @@
+project_id = "fycoyqlaxsqzxmhcykxf"
+
+[functions.analyze-document]
+verify_jwt = false
+
+[functions.refine-content]
+verify_jwt = false
+
+[functions.seo-analyze]
+verify_jwt = false
+
+[functions.suggest-headlines]
+verify_jwt = false
+
+[functions.trending-hashtags]
+verify_jwt = false
+
+[functions.generate-image]
+verify_jwt = false
+
+[functions.narrative-intelligence]
+verify_jwt = false
+
+[functions.analyze-multimodal]
+verify_jwt = false
