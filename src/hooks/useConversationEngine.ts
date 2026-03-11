@@ -66,8 +66,8 @@ function isProceedIntent(input: string): boolean {
     /\b(move|carry)\s+on\b/i,
     /\bjust\s+(do|go|make|create|generate|write)\b/i,
     /\bskip\s+(questions?|this)\b/i,
-    // "let's go" / "lets go" with anything after
-    /^lets?\s+go\b/i,
+    // "let's go" / "lets go" (but NOT "lets go back" or "lets go back to...")
+    /^lets?\s+go(?!\s+back)\b/i,
     // "give me a draft" variants
     /\bgive\s+me\s+(a\s+|the\s+|my\s+)?draft\b/i,
     // "quickly/quick/fast prep/create/make/write/gen the draft"
@@ -86,6 +86,10 @@ function isProceedIntent(input: string): boolean {
     /\bskip\s+(to\s+)?(the\s+)?draft\b/i,
   ];
   if (PATTERNS.some((p) => p.test(t))) return true;
+
+  // Bail out: if the message contains command verbs, it's NOT a proceed signal
+  // e.g. "lets first change the post to short form" is a format change, not "let's go"
+  if (/\b(change|switch|update|edit|redo|revisit|modify|adjust|go\s*back|revert|undo)\b/i.test(t)) return false;
 
   // Catch-all 1: message starts with a clear forward-motion verb
   if (/^(proceed|go ahead|just|skip|move|let'?s|lets|give|prep|make|create|write|generate|build|draft)\b/i.test(t)) return true;
@@ -708,11 +712,17 @@ function handleGlobalCommand(
   }
 
   // ── Switch format from any phase ──
-  if (
-    /\b(change|switch|update|edit|use|try|pick|choose)\s+(to\s+|the\s+|my\s+)?(format|short\s*post|long[- ]?form|sponsored|article|viral)\b/i.test(lower) ||
-    /\b(i\s+want|i'?d?\s+like|give\s+me|just)\s+(the\s+|a\s+)?(short\s*post|long[- ]?form|sponsored|article|viral)\b/i.test(lower) ||
-    /\b(change|switch)\s+format\b/i.test(lower)
-  ) {
+  // Flexible detection: if the message contains a format-change intent AND a format keyword
+  const hasFormatIntent =
+    /\b(change|switch|update|edit|use|try|pick|choose|make|convert)\b/i.test(lower) &&
+    /\b(format|post|form|article|long|short|viral|sponsored|ad)\b/i.test(lower);
+  const hasFormatRequest =
+    /\b(i\s+want|i'?d?\s+like|give\s+me|just|let'?s)\b/i.test(lower) &&
+    /\b(short\s*(form|post)?|long[- ]?(form|post)?|viral|sponsored|article|ad)\b/i.test(lower);
+  const hasExplicitFormatSwitch = /\b(change|switch)\s+(the\s+|my\s+)?(format|post\s*type)\b/i.test(lower);
+  const hasFormatToPhrase = /\bto\s+(short|long|viral|sponsored|article)\b/i.test(lower);
+
+  if (hasFormatIntent || hasFormatRequest || hasExplicitFormatSwitch || hasFormatToPhrase) {
     const formatDetect = lower;
     const formats: FormatOption[] = [];
     if (/\b(long|article)\b/i.test(formatDetect)) formats.push("linkedinLong");
