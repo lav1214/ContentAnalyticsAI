@@ -676,20 +676,25 @@ function handleGlobalCommand(
   }
 
   // ── Change audience / go back to positioning questions ──
-  if (
-    /\b(change|switch|update|pick|choose|set)\s+(the\s+|a\s+|my\s+)?(audience|target\s+audience|reaction|desired\s+reaction|challenged?\s+belief|objective|voice|brand\s+type)\b/i.test(lower) ||
-    /\b(go\s*back\s*(to)?\s*(the)?\s*(audience|positioning|questions?))\b/i.test(lower) ||
-    /\b(different|another|new)\s+(audience|target)\b/i.test(lower) ||
-    /\b(back\s+to\s+(audience|positioning))\b/i.test(lower)
-  ) {
+  // Broad matching: covers typed requests, typos, and chip clicks for any positioning field
+  const positioningTerms = /\b(audience|target\s*audience|reaction|desired\s*reaction|challeng\w*\s*belief|objective|voice|brand\s*type|engag\w+|authority|lead[\s-]?gen|goal|positioning|questions?|target)\b/i;
+  const changeVerbs = /\b(change|switch|update|pick|choose|set|adjust|modify|edit|revise|redo|revisit)\b/i;
+  const wantsPositioningChange =
+    (changeVerbs.test(lower) && positioningTerms.test(lower)) ||
+    /\b(go\s*back\s*(to)?\s*(the)?\s*(audience|positioning|questions?|engag\w+|objective|goal))\b/i.test(lower) ||
+    /\b(different|another|new)\s+(audience|target|objective|goal|engag\w+)\b/i.test(lower) ||
+    /\b(back\s+to\s+(audience|positioning))\b/i.test(lower) ||
+    /\bi'?d?\s+like\s+to\s+\w+\s+(the\s+|my\s+)?\w*(audience|engag\w+|authority|lead|goal|objective|reaction|belief|voice|target)\b/i.test(lower);
+
+  if (wantsPositioningChange) {
     // Detect which positioning field the user wants to change
-    const fieldMatch = lower.match(/\b(audience|target\s+audience|reaction|desired\s+reaction|challenged?\s+belief|objective|voice|brand\s+type|positioning|questions?)\b/i);
+    const fieldMatch = lower.match(/\b(audience|target\s*audience|reaction|desired\s*reaction|challeng\w*\s*belief|objective|voice|brand\s*type|positioning|questions?|engag\w+|authority|lead[\s-]?gen|goal)\b/i);
     const field = fieldMatch ? fieldMatch[1].toLowerCase() : "audience";
 
     const questionIdx =
       field.includes("reaction") ? 0
-      : field.includes("belief") ? 1
-      : field.includes("objective") ? 2
+      : field.includes("belief") || field.includes("challeng") ? 1
+      : field.includes("objective") || field.includes("engag") || field.includes("authority") || field.includes("lead") || field.includes("goal") ? 2
       : field.includes("voice") || field.includes("brand") ? 3
       : -1; // audience or generic "positioning"
 
@@ -750,6 +755,38 @@ function handleGlobalCommand(
       role: "assistant",
       content: "Sure — paste or upload your new source material and I'll re-analyze from scratch.",
     });
+    return true;
+  }
+
+  // ── Generic "go back" / "change something" / "start over" ──
+  // Catch-all for when the user wants to backtrack but didn't specify what
+  if (
+    /\b(go\s*back|go\s+to\s+previous|previous\s+step|back\s+a\s+step|start\s+over)\b/i.test(lower) ||
+    /\bi\s+(want|need|would like)\s+to\s+(go\s+back|change|redo|revisit|adjust)\b/i.test(lower) ||
+    /\b(change|redo|revisit)\s+(something|my\s+choices?|my\s+selections?|earlier|previous)\b/i.test(lower)
+  ) {
+    // Build a context-aware menu of what they can go back to
+    const options: string[] = [];
+    if (session.sourceAnalysis) options.push("← Edit strategy / analysis");
+    if (session.contentBrief) options.push("← Edit content brief");
+    if (session.strategicPosition.audience) options.push("← Change audience");
+    if (session.selectedAngle) options.push("← Change angle");
+    if (session.settings) options.push("← Change tone");
+    if (hasDraftContent(session.drafts)) options.push("← Undo last draft edit");
+
+    if (options.length === 0) {
+      // Nothing to go back to — we're at the start
+      actions.addMessage({
+        role: "assistant",
+        content: "We're at the beginning — paste or upload your source material to get started!",
+      });
+    } else {
+      actions.addMessage({
+        role: "assistant",
+        content: "No problem! What would you like to revisit?",
+        options,
+      });
+    }
     return true;
   }
 
@@ -1228,7 +1265,7 @@ export function useConversationEngine() {
             addMessage({
               role: "assistant",
               content: `${encouragement} Got it: **"${input}"** ✅\n\nClarity score: **${Math.min(Math.round(tempScore), 8)}/10** — looking solid!\n\n${nextQ.question}`,
-              options: nextQ.options,
+              options: [...(nextQ.options || []), "← Go back"],
             });
           }, 500);
         } else {
@@ -1277,7 +1314,7 @@ export function useConversationEngine() {
             addMessage({
               role: "assistant",
               content: `Going with **Contrarian** angle — bold choice! 🔥\n\nWant to pick specific formats, or should I generate all three (Long-Form, Short Post, Sponsored Ad)?`,
-              options: ["All Three — let's go! 🚀", "Let me pick formats"],
+              options: ["All Three — let's go! 🚀", "Let me pick formats", "← Change angle", "← Go back"],
             });
           }, 400);
           return;
@@ -1301,7 +1338,7 @@ export function useConversationEngine() {
           addMessage({
             role: "assistant",
             content: `Great choice — **${angle.charAt(0).toUpperCase() + angle.slice(1)}** angle locked! 🔥\n\nWant to pick specific formats, or should I generate all three (Long-Form, Short Post, Sponsored Ad)?`,
-            options: ["All Three — let's go! 🚀", "Let me pick formats"],
+            options: ["All Three — let's go! 🚀", "Let me pick formats", "← Change angle", "← Go back"],
           });
         }, 500);
         return;
