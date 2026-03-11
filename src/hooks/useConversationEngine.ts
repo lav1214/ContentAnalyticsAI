@@ -651,7 +651,8 @@ function handleGlobalCommand(
   if (
     /\b(go\s*back\s*(to)?\s*(the)?\s*(brief|strategy|analysis))\b/i.test(lower) ||
     /\b(edit|change|update|reopen)\s+(the\s+)?(brief|strategy)\b/i.test(lower) ||
-    /\b(back\s+to\s+(brief|strategy))\b/i.test(lower)
+    /\b(back\s+to\s+(brief|strategy))\b/i.test(lower) ||
+    lower === "edit strategy brief"
   ) {
     if (session.contentBrief) {
       actions.updateContentBrief({ confirmed: false });
@@ -672,6 +673,55 @@ function handleGlobalCommand(
       });
       return true;
     }
+  }
+
+  // ── Change audience / go back to positioning questions ──
+  if (
+    /\b(change|switch|update|pick|choose|set)\s+(the\s+|a\s+|my\s+)?(audience|target\s+audience|reaction|desired\s+reaction|challenged?\s+belief|objective|voice|brand\s+type)\b/i.test(lower) ||
+    /\b(go\s*back\s*(to)?\s*(the)?\s*(audience|positioning|questions?))\b/i.test(lower) ||
+    /\b(different|another|new)\s+(audience|target)\b/i.test(lower) ||
+    /\b(back\s+to\s+(audience|positioning))\b/i.test(lower)
+  ) {
+    // Detect which positioning field the user wants to change
+    const fieldMatch = lower.match(/\b(audience|target\s+audience|reaction|desired\s+reaction|challenged?\s+belief|objective|voice|brand\s+type|positioning|questions?)\b/i);
+    const field = fieldMatch ? fieldMatch[1].toLowerCase() : "audience";
+
+    const questionIdx =
+      field.includes("reaction") ? 0
+      : field.includes("belief") ? 1
+      : field.includes("objective") ? 2
+      : field.includes("voice") || field.includes("brand") ? 3
+      : -1; // audience or generic "positioning"
+
+    if (questionIdx >= 0 && questionIdx < ALL_POSITIONING_QUESTIONS.length) {
+      const q = ALL_POSITIONING_QUESTIONS[questionIdx];
+      // Reset to positioning phase at the right step
+      if (session.contentBrief?.confirmed) {
+        actions.updateContentBrief({ confirmed: false });
+      }
+      actions.setPhase("positioning");
+      actions.setPositioningStep(questionIdx);
+      actions.addMessage({
+        role: "assistant",
+        content: `No problem — let's revisit this.\n\n${q.question}`,
+        options: q.options,
+      });
+      return true;
+    }
+
+    // Generic "change audience" or "go back to positioning"
+    actions.setPhase("positioning");
+    if (session.contentBrief?.confirmed) {
+      actions.updateContentBrief({ confirmed: false });
+    }
+    const audienceQ = ALL_POSITIONING_QUESTIONS[0];
+    actions.setPositioningStep(0);
+    actions.addMessage({
+      role: "assistant",
+      content: `Sure — let's revisit the positioning. Current audience: **${session.strategicPosition.audience || "not set"}**.\n\n${audienceQ.question}`,
+      options: audienceQ.options,
+    });
+    return true;
   }
 
   // ── Undo last draft edit ──
@@ -1041,7 +1091,7 @@ export function useConversationEngine() {
                 addMessage({
                   role: "assistant",
                   content: `Perfect. Building your content strategy now... 🎯\n\nNow for the fun part — **choosing your angle!**\n\n**🔥 Contrarian** — Lead with what everyone's getting wrong.\n**🎓 Educational Authority** — Lead with data and frameworks.\n**📖 Story-Driven Insight** — Lead with a narrative.\n\nWhich one feels most *you* for this piece?`,
-                  options: ["Contrarian", "Educational Authority", "Story-Driven Insight"],
+                  options: ["Contrarian", "Educational Authority", "Story-Driven Insight", "← Change audience"],
                 });
               }, 600);
               return;
@@ -1159,7 +1209,7 @@ export function useConversationEngine() {
             addMessage({
               role: "assistant",
               content: `Got it — skipping ahead! 🎯\n\nNow let's pick your angle:\n\n**🔥 Contrarian** — Lead with what everyone's getting wrong.\n**🎓 Educational Authority** — Lead with data and frameworks.\n**📖 Story-Driven Insight** — Lead with a narrative.\n\nWhich one?`,
-              options: ["Contrarian", "Educational Authority", "Story-Driven Insight"],
+              options: ["Contrarian", "Educational Authority", "Story-Driven Insight", "← Change audience"],
             });
           }, 400);
           return;
@@ -1202,7 +1252,7 @@ export function useConversationEngine() {
               addMessage({
                 role: "assistant",
                 content: `**Clarity score: ${score}/10 ✓** — Strategy is locked and loaded! 🎯\n\nNow for the fun part — **choosing your angle!**\n\n**🔥 Contrarian**\nLead with what everyone's getting wrong.\n\n**🎓 Educational Authority**\nLead with data and frameworks.\n\n**📖 Story-Driven Insight**\nLead with a narrative that pulls people in emotionally.\n\nWhich one feels most *you* for this piece?`,
-                options: ["Contrarian", "Educational Authority", "Story-Driven Insight"],
+                options: ["Contrarian", "Educational Authority", "Story-Driven Insight", "← Change audience"],
               });
             }, 600);
           }
