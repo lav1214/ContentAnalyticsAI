@@ -98,13 +98,43 @@ function isProceedIntent(input: string): boolean {
 }
 
 /**
+ * Detects whether the user is rejecting / negating a specific option.
+ * Returns the rejected keyword(s) or null.
+ * E.g. "i dont want contrarian" → "contrarian"
+ *      "not story driven"       → "story"
+ */
+function detectNegation(input: string): string | null {
+  const m = input.toLowerCase().match(
+    /\b(?:don'?t|do\s+not|no|not|never|hate|dislike|skip|drop|remove|without|stop|avoid|less|fewer)\s+(?:want|like|need|use|pick|choose|do)?\s*(?:the\s+|a\s+|any\s+)?(contrarian|educational|story[- ]?driven|long[- ]?form|short|sponsored|provocative|authoritative|conversational|visionary|engagement|authority|lead[- ]?gen)\b/i
+  );
+  return m ? m[1].toLowerCase() : null;
+}
+
+/**
+ * Returns the angle options that remain after excluding a rejected one.
+ */
+function angleOptionsExcluding(rejected: string | null): string[] {
+  const all = ["Contrarian", "Educational Authority", "Story-Driven Insight"];
+  if (!rejected) return all;
+  return all.filter((a) => !a.toLowerCase().includes(rejected.replace(/[- ]/g, "")));
+}
+
+/**
  * Detects angle intent from free text (covers chip clicks + typed input).
+ * Negation-aware: "i don't want contrarian" will NOT match contrarian.
  */
 function detectAngle(input: string): AngleOption | null {
   const t = input.toLowerCase();
-  if (t.includes("contrarian") || t.includes("flip") || t.includes("wrong")) return "contrarian";
-  if (t.includes("educational") || t.includes("data") || t.includes("framework") || t.includes("authority")) return "educational";
-  if (t.includes("story") || t.includes("narrative") || t.includes("driven")) return "story-driven";
+  const negated = detectNegation(input);
+
+  // If user is negating an angle, don't match that angle
+  const isContrarian = (t.includes("contrarian") || t.includes("flip") || t.includes("wrong")) && negated !== "contrarian";
+  const isEducational = (t.includes("educational") || t.includes("data") || t.includes("framework") || (t.includes("authority") && !t.includes("authority —"))) && negated !== "educational";
+  const isStoryDriven = (t.includes("story") || t.includes("narrative") || t.includes("driven")) && !(negated && negated.includes("story"));
+
+  if (isContrarian) return "contrarian";
+  if (isEducational) return "educational";
+  if (isStoryDriven) return "story-driven";
   return null;
 }
 
@@ -592,11 +622,27 @@ function handleGlobalCommand(
 
   // ── Change angle from any phase ──
   if (
-    /\b(change|switch|try|use|set)\s+(the\s+)?(angle\s+to\s+|to\s+)?(contrarian|educational|story[- ]?driven)\b/i.test(lower) ||
+    /\b(change|switch|try|use|set|update|edit|redo|revisit|pick|choose|modify|adjust)\s+(the\s+|my\s+)?(angle\s+to\s+|to\s+)?(contrarian|educational|story[- ]?driven)\b/i.test(lower) ||
+    /\b(change|switch|update|edit|redo|revisit|pick|choose|modify|adjust)\s+(the\s+|my\s+)?angle\b/i.test(lower) ||
     /\b(different|another|new)\s+angle\b/i.test(lower) ||
-    lower === "change angle" || lower === "try a different angle"
+    /\bangle\b/.test(lower) && /\b(change|switch|update|edit|redo|revisit|pick|choose|modify|adjust)\b/.test(lower) ||
+    lower === "change angle" || lower === "update the angle" || lower === "try a different angle"
   ) {
+    const negated = detectNegation(cleaned);
     const newAngle = detectAngle(cleaned);
+
+    // Handle negation: "i don't want contrarian" → show remaining options
+    if (negated && !newAngle) {
+      const remaining = angleOptionsExcluding(negated);
+      actions.setPhase("angle");
+      actions.addMessage({
+        role: "assistant",
+        content: `Got it — dropping **${negated}**. Which of these instead?`,
+        options: [...remaining, "← Go back"],
+      });
+      return true;
+    }
+
     if (newAngle && session.sourceAnalysis) {
       actions.setSelectedAngle(newAngle);
       if (hasDraftContent(session.drafts)) {
@@ -608,21 +654,22 @@ function handleGlobalCommand(
       actions.addMessage({
         role: "assistant",
         content: `Angle switched to **${newAngle}**. Ready to generate drafts with the new angle?`,
-        options: ["All Three — let's go! 🚀", "Let me pick formats"],
+        options: ["All Three — let's go! 🚀", "Let me pick formats", "← Change angle"],
       });
       return true;
     }
-    // No specific angle mentioned — ask which one
+    // No specific angle mentioned — show options with current state
+    actions.setPhase("angle");
     actions.addMessage({
       role: "assistant",
-      content: `Current angle is **${session.selectedAngle || "not set"}**. Which angle would you like?\n\n**Contrarian** — Lead with what everyone's getting wrong.\n**Educational** — Lead with data and frameworks.\n**Story-Driven** — Lead with a narrative.`,
-      options: ["Contrarian", "Educational Authority", "Story-Driven Insight"],
+      content: `Current angle is **${session.selectedAngle || "not set"}**. Which angle would you like?\n\n**🔥 Contrarian** — Lead with what everyone's getting wrong.\n**🎓 Educational** — Lead with data and frameworks.\n**📖 Story-Driven** — Lead with a narrative.`,
+      options: ["Contrarian", "Educational Authority", "Story-Driven Insight", "← Go back"],
     });
     return true;
   }
 
   // ── Change tone from any phase ──
-  if (/\b(change|switch|set|make)\s+(the\s+)?tone\b/i.test(lower) || /\btone\s+to\s+(\w+)/i.test(lower)) {
+  if (/\b(change|switch|set|make|update|edit|adjust|modify|pick|choose)\s+(the\s+|my\s+)?tone\b/i.test(lower) || /\btone\s+to\s+(\w+)/i.test(lower)) {
     const toneMatch = lower.match(/(?:tone\s+to\s+|try\s+|use\s+|switch\s+to\s+)(authoritative|conversational|provocative|visionary)/i);
     if (toneMatch) {
       const newTone = TONE_NAMES[toneMatch[1].toLowerCase()];
@@ -642,7 +689,57 @@ function handleGlobalCommand(
     actions.addMessage({
       role: "assistant",
       content: "Which tone would you like?",
-      options: ["Authoritative", "Conversational", "Provocative", "Visionary"],
+      options: ["Authoritative", "Conversational", "Provocative", "Visionary", "← Go back"],
+    });
+    return true;
+  }
+
+  // ── Negation of an angle (from any phase): "i don't want contrarian" ──
+  const negatedItem = detectNegation(lower);
+  if (negatedItem && /contrarian|educational|story/i.test(negatedItem)) {
+    const remaining = angleOptionsExcluding(negatedItem);
+    actions.setPhase("angle");
+    actions.addMessage({
+      role: "assistant",
+      content: `Got it — no ${negatedItem}. Which angle instead?`,
+      options: [...remaining, "← Go back"],
+    });
+    return true;
+  }
+
+  // ── Switch format from any phase ──
+  if (
+    /\b(change|switch|update|edit|use|try|pick|choose)\s+(to\s+|the\s+|my\s+)?(format|short\s*post|long[- ]?form|sponsored|article|viral)\b/i.test(lower) ||
+    /\b(i\s+want|i'?d?\s+like|give\s+me|just)\s+(the\s+|a\s+)?(short\s*post|long[- ]?form|sponsored|article|viral)\b/i.test(lower) ||
+    /\b(change|switch)\s+format\b/i.test(lower)
+  ) {
+    const formatDetect = lower;
+    const formats: FormatOption[] = [];
+    if (/\b(long|article)\b/i.test(formatDetect)) formats.push("linkedinLong");
+    if (/\b(short|viral)\b/i.test(formatDetect)) formats.push("linkedinShort");
+    if (/\b(ad|sponsor)\b/i.test(formatDetect)) formats.push("sponsoredAds");
+
+    if (formats.length > 0 && hasDraftContent(session.drafts)) {
+      // Regenerate with new format selection
+      actions.pushDraftHistory(`Format changed to ${formats.join(", ")}`);
+      runDraftGeneration(session, formats, session.selectedAngle, actions);
+      return true;
+    }
+    if (formats.length > 0) {
+      // Store format preference for later
+      actions.setSelectedFormats(formats);
+      actions.addMessage({
+        role: "assistant",
+        content: `Got it — switching to **${formats.map(f => f === "linkedinLong" ? "Long-Form" : f === "linkedinShort" ? "Short Post" : "Sponsored Ad").join(", ")}**.`,
+        options: session.sourceAnalysis ? ["Generate drafts now", "← Change angle"] : undefined,
+      });
+      return true;
+    }
+    // No specific format detected — show options
+    actions.addMessage({
+      role: "assistant",
+      content: "Which format would you like?",
+      options: ["LinkedIn Long-Form Article", "Short Viral-Style Post", "LinkedIn Sponsored Ads", "All Three", "← Go back"],
     });
     return true;
   }
@@ -650,9 +747,9 @@ function handleGlobalCommand(
   // ── Go back to brief / strategy ──
   if (
     /\b(go\s*back\s*(to)?\s*(the)?\s*(brief|strategy|analysis))\b/i.test(lower) ||
-    /\b(edit|change|update|reopen)\s+(the\s+)?(brief|strategy)\b/i.test(lower) ||
-    /\b(back\s+to\s+(brief|strategy))\b/i.test(lower) ||
-    lower === "edit strategy brief"
+    /\b(edit|change|update|reopen|revisit|redo|modify|adjust)\s+(the\s+|my\s+)?(brief|strategy|analysis)\b/i.test(lower) ||
+    /\b(back\s+to\s+(brief|strategy|analysis|editing))\b/i.test(lower) ||
+    lower === "edit strategy brief" || lower === "go back to analysis"
   ) {
     if (session.contentBrief) {
       actions.updateContentBrief({ confirmed: false });
@@ -956,7 +1053,7 @@ export function useConversationEngine() {
               addMessage({
                 role: "assistant",
                 content: `✅ **${detectedTarget.charAt(0).toUpperCase() + detectedTarget.slice(1)}** updated!\n\n**Before:** ${truncOld}\n**After:** ${effectiveRevision}\n\n${buildAnalysisSummary(revisedAnalysis)}`,
-                options: ["Looks great — let's move on", "Adjust the thesis", "The contrarian angle needs work", "Add a missing insight"],
+                options: ["Looks great — let's move on", "Adjust the thesis", "The contrarian angle needs work", "Add a missing insight", "← Go back"],
               });
             }, 400);
             return;
@@ -987,12 +1084,12 @@ export function useConversationEngine() {
               addMessage({
                 role: "assistant",
                 content: buildAnalysisSummary(result.analysis),
-                options: ["Looks great — let's move on", "Adjust the thesis", "The contrarian angle needs work", "Add a missing insight"],
+                options: ["Looks great — let's move on", "Adjust the thesis", "The contrarian angle needs work", "Add a missing insight", "← Go back"],
               });
             } catch (err) {
               console.error("AI re-analysis failed:", err);
               setPhase("intake");
-              addMessage({ role: "assistant", content: `Hmm, the re-analysis hit a snag: ${err instanceof Error ? err.message : "Unknown error"}. Could you try pasting a shorter excerpt?` });
+              addMessage({ role: "assistant", content: `Hmm, the re-analysis hit a snag: ${err instanceof Error ? err.message : "Unknown error"}. Could you try pasting a shorter excerpt?`, options: ["Try shorter text", "Skip — use what we have", "← Go back"] });
             }
             return;
           }
@@ -1000,7 +1097,8 @@ export function useConversationEngine() {
           setTimeout(() => {
             addMessage({
               role: "assistant",
-              content: "I can help with targeted edits! Try something like:\n• **Thesis: ...** to update the core claim\n• **Contrarian: ...** to sharpen the angle\n• **Insights:** for a bullet list\n\nOr just say **\"Looks great — let's move on\"** when you're happy with it! 😊",
+              content: "I can help with targeted edits! Try something like:\n• **Thesis: ...** to update the core claim\n• **Contrarian: ...** to sharpen the angle\n• **Insights:** for a bullet list\n\nOr just say **\"Looks great — let's move on\"** when you're happy with it!",
+              options: ["Looks great — let's move on", "Adjust the thesis", "The contrarian angle needs work", "Add a missing insight", "← Go back"],
             });
           }, 350);
           return;
@@ -1190,7 +1288,7 @@ export function useConversationEngine() {
             }
             setIntakeRevisionTarget(null);
             setTimeout(() => {
-              addMessage({ role: "assistant", content: `Updated! Anything else to adjust, or are we good to go?`, options: ["Looks right — confirm ✓"] });
+              addMessage({ role: "assistant", content: `Updated! Anything else to adjust, or are we good to go?`, options: ["Looks right — confirm ✓", "Change the objective", "Change the tone", "← Go back"] });
             }, 300);
             return;
           }
@@ -1198,7 +1296,7 @@ export function useConversationEngine() {
           if (matchedBriefField) {
             if (matchedBriefField === "tone") {
               setTimeout(() => {
-                addMessage({ role: "assistant", content: "Which tone do you prefer?", options: ["Authoritative", "Conversational", "Provocative", "Visionary"] });
+                addMessage({ role: "assistant", content: "Which tone do you prefer?", options: ["Authoritative", "Conversational", "Provocative", "Visionary", "← Go back"] });
               }, 300);
               setIntakeRevisionTarget(matchedBriefField as any);
               return;
@@ -1222,7 +1320,7 @@ export function useConversationEngine() {
             addMessage({
               role: "assistant",
               content: "Take a look at the Content Brief on the right — edit anything that's off, or use the quick options below.",
-              options: ["Looks right — confirm ✓", "Change the objective", "Change the tone", "Add my brand name", "Update the narrative"],
+              options: ["Looks right — confirm ✓", "Change the objective", "Change the tone", "Add my brand name", "Update the narrative", "← Go back to analysis"],
             });
           }, 300);
           return;
@@ -1249,6 +1347,32 @@ export function useConversationEngine() {
               options: ["Contrarian", "Educational Authority", "Story-Driven Insight", "← Change audience"],
             });
           }, 400);
+          return;
+        }
+
+        // ✅ Guard: check if input looks like a command, not an answer
+        // Commands contain action verbs + known entities (angle, format, tone, etc.)
+        const looksLikeCommand =
+          /\b(change|switch|update|edit|redo|go\s*back|undo|revert|pick|choose|modify|adjust)\b/i.test(lower) &&
+          /\b(angle|format|tone|brief|strategy|audience|draft|post|long|short|sponsored|contrarian|educational|story)\b/i.test(lower);
+        const looksLikeNegation = detectNegation(input) !== null;
+
+        if (looksLikeCommand || looksLikeNegation) {
+          // This wasn't caught by the global router, but it's clearly not an answer.
+          // Show a helpful disambiguation instead of swallowing it.
+          const currentQ = remainingQuestions[positioningStep];
+          setTimeout(() => {
+            addMessage({
+              role: "assistant",
+              content: `I wasn't sure if that's your answer or a request to change something. If you'd like to change a setting, try one of these:`,
+              options: [
+                "← Change angle",
+                "← Change tone",
+                "← Go back to strategy",
+                ...(currentQ?.options || []),
+              ],
+            });
+          }, 300);
           return;
         }
 
@@ -1280,7 +1404,7 @@ export function useConversationEngine() {
               addMessage({
                 role: "assistant",
                 content: `Clarity score: **${score}/10** — we're close but not quite at the 8/10 sweet spot yet.\n\nNo worries! A little more clarity will make the drafts significantly better. Want to tighten anything up, or should I suggest what to revisit?`,
-                options: ["Re-answer audience question", "Sharpen the challenged belief", "Proceed anyway"],
+                options: ["Re-answer audience question", "Sharpen the challenged belief", "Proceed anyway", "← Go back to strategy"],
               });
             }, 500);
           } else {
@@ -1303,6 +1427,20 @@ export function useConversationEngine() {
       if (phase === "angle") {
         // ✅ Detect angle from free text OR chips
         const detectedAngle = detectAngle(input);
+        const negated = detectNegation(input);
+
+        // ✅ Handle negation: "i don't want contrarian" → show remaining options
+        if (negated && !detectedAngle) {
+          const remaining = angleOptionsExcluding(negated);
+          setTimeout(() => {
+            addMessage({
+              role: "assistant",
+              content: `Got it — no ${negated}! How about one of these instead?`,
+              options: [...remaining, "← Go back"],
+            });
+          }, 300);
+          return;
+        }
 
         // ✅ Proceed without choosing → default to contrarian
         if (proceed && !detectedAngle) {
@@ -1329,7 +1467,20 @@ export function useConversationEngine() {
           story: "story-driven",
           "proceed anyway": "contrarian",
         };
-        const angle = detectedAngle || angleMap[input.toLowerCase()] || "contrarian";
+
+        // If no angle detected and no map match, don't silently default — ask
+        const angle = detectedAngle || angleMap[input.toLowerCase()] || null;
+        if (!angle) {
+          setTimeout(() => {
+            addMessage({
+              role: "assistant",
+              content: `I didn't catch which angle you'd like. Pick one:\n\n**🔥 Contrarian** — Lead with what everyone's getting wrong.\n**🎓 Educational Authority** — Lead with data and frameworks.\n**📖 Story-Driven Insight** — Lead with a narrative.`,
+              options: ["Contrarian", "Educational Authority", "Story-Driven Insight", "← Go back"],
+            });
+          }, 300);
+          return;
+        }
+
         setSelectedAngle(angle);
         setClarityScore(10);
         setPhase("format");
@@ -1364,7 +1515,7 @@ export function useConversationEngine() {
             addMessage({
               role: "assistant",
               content: "No problem! Which formats do you want?",
-              options: ["LinkedIn Long-Form Article", "Short Viral-Style Post", "LinkedIn Sponsored Ads", "All Three"],
+              options: ["LinkedIn Long-Form Article", "Short Viral-Style Post", "LinkedIn Sponsored Ads", "All Three", "← Change angle"],
             });
           }, 400);
           return;
@@ -1456,7 +1607,7 @@ export function useConversationEngine() {
               });
             }
           } catch (err) {
-            addMessage({ role: "assistant", content: `Readiness check hit a snag: ${err instanceof Error ? err.message : "Unknown error"}. But don't worry — you can still copy and use the draft!` });
+            addMessage({ role: "assistant", content: `Readiness check hit a snag: ${err instanceof Error ? err.message : "Unknown error"}. But don't worry — you can still copy and use the draft!`, options: ["Just copy and go! 🚀", "← Back to editing", "← Change angle"] });
           }
           return;
         }
